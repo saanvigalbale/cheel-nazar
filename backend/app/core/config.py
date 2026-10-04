@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import List
+from typing import List, Set
 from pydantic import BaseModel
 
 class Settings(BaseModel):
@@ -12,6 +12,11 @@ class Settings(BaseModel):
     ROOT_DIR: Path = BASE_DIR.parent
     UPLOADS_DIR: Path = ROOT_DIR / "uploads"
     DATA_DIR: Path = ROOT_DIR / "data"
+
+    # Upload configurations
+    ALLOWED_VIDEO_EXTENSIONS: Set[str] = {".mp4", ".mov", ".avi", ".mkv"}
+    MAX_UPLOAD_SIZE_MB: int = 500
+    MAX_UPLOAD_SIZE_BYTES: int = 500 * 1024 * 1024  # 500 MB
 
     # CORS configuration
     CORS_ORIGINS: List[str] = [

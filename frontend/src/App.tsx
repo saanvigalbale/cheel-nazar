@@ -11,6 +11,7 @@ import { Terminal } from 'lucide-react';
 export function App() {
   const [backendHealthy, setBackendHealthy] = useState<boolean | null>(null);
   const [isCheckingHealth, setIsCheckingHealth] = useState<boolean>(false);
+  const [activeJob, setActiveJob] = useState<{ job_id: string; filename: string } | null>(null);
 
   const checkHealth = useCallback(async () => {
     setIsCheckingHealth(true);
@@ -53,7 +54,10 @@ export function App() {
         {/* Pipeline & Ingestion Section */}
         <section className="grid grid-cols-1 lg:grid-cols-12 gap-6">
           <div className="lg:col-span-5">
-            <VideoUploader />
+            <VideoUploader
+              activeJobId={activeJob?.job_id}
+              onUploadSuccess={(result) => setActiveJob(result)}
+            />
           </div>
           <div className="lg:col-span-7">
             <ProcessingStatus />
