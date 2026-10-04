@@ -163,6 +163,71 @@ export interface Disasters {
   [hazard: string]: DisasterFloodFinding | undefined;
 }
 
+/** Phase 8.5 georeferencing status. Never a coordinate unless genuinely measured. */
+export interface GeoreferencingStatus {
+  status: 'georeferenced' | 'unavailable' | string;
+  crs: string | null;
+  source: string | null;
+  n_control_points: number;
+  reason: string;
+  requirements: string[];
+  metadata_probe: {
+    sources_checked: string[];
+    sources_found: string[];
+    n_frames_inspected: number;
+    n_frames_with_gps_exif: number;
+    first_frame_gps_fix: { lon: number; lat: number; alt: number | null } | null;
+    sidecar_files_found: string[];
+    video_metadata_boxes_found: string[];
+    registered_parsers: string[];
+    usable: boolean;
+  };
+}
+
+/**
+ * 3D reconstruction (Phases 8.1-8.5) under `results.reconstruction` and
+ * `GET /api/v1/reconstruction/{job_id}`.
+ *
+ * The reconstruction is LOCAL and UP-TO-SCALE. `georeferenced` is only true
+ * when real GPS metadata exists; there are deliberately no lat/lon fields.
+ */
+export interface ReconstructionInfo {
+  status: 'success' | 'partial' | 'not_available' | string;
+  kind: 'denser_point_cloud' | null;
+  phase: string;
+  sparse_point_count: number | null;
+  dense_point_count: number | null;
+  n_frames_registered: number | null;
+  coordinate_system: 'local_up_to_scale' | string;
+  scale_status: 'UP_TO_SCALE_NO_METRIC_UNITS' | string;
+  georeferenced: boolean;
+  georeferencing_status?: string;
+  georeferencing_reason?: string;
+  georeferencing?: GeoreferencingStatus;
+  artifact: {
+    glb_available: boolean;
+    ply_available: boolean;
+    endpoint: string;
+    primary: string | null;
+    url?: string | null;
+    media_type?: string;
+  };
+  limitations: string[];
+  not_measured?: string[];
+  served?: Record<string, string>;
+  artifacts?: Record<string, {
+    available: boolean;
+    size_bytes: number | null;
+    media_type: string;
+    url: string | null;
+  }>;
+}
+
+/** Shape returned by GET /api/v1/reconstruction/{job_id} */
+export interface JobReconstruction extends ReconstructionInfo {
+  job_id: string;
+}
+
 /** Shape returned by GET /api/v1/jobs/{job_id}/results */
 export interface JobResults {
   job_id: string;
@@ -170,6 +235,7 @@ export interface JobResults {
     detector: string;
     segmentation: string;
     depth: string;
+    reconstruction?: string;
   };
   categories: {
     people: DetectedCategory;
@@ -181,6 +247,7 @@ export interface JobResults {
     possible_water_extent: SemanticCategory;
   };
   relative_depth?: RelativeDepthInfo;
+  reconstruction?: ReconstructionInfo;
   disasters?: Disasters;
   disaster_modules_available?: string[];
   disaster_modules_not_implemented?: string[];

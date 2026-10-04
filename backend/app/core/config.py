@@ -18,6 +18,11 @@ class Settings(BaseModel):
     MAX_UPLOAD_SIZE_MB: int = 500
     MAX_UPLOAD_SIZE_BYTES: int = 500 * 1024 * 1024  # 500 MB
 
+    # Reconstruction (Phase 8.6).
+    # False = reuse whatever artifacts already exist (fast). True = also build a
+    # missing reconstruction during the job pipeline, which takes minutes.
+    RECONSTRUCTION_AUTORUN: bool = False
+
     # CORS configuration
     CORS_ORIGINS: List[str] = [
         "http://localhost:5173",

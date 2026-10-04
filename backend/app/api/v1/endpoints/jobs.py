@@ -9,6 +9,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, status
 
 from app.core.config import settings
 from app.services.frame_extractor import extract_frames
+from app.services.reconstruction_service import ensure_reconstruction
 
 # Ensure project root is in sys.path so the ai package can be imported
 if str(settings.ROOT_DIR) not in sys.path:
@@ -156,13 +157,29 @@ async def _run_pipeline(job_id: str) -> None:
 
         job["hazards_analyzed"] = sorted(disaster_payload["disasters"])
 
-        # Step 6: 3D reconstruction (placeholder - NOT implemented)
+        # Step 6: 3D reconstruction (REAL, Phases 8.1-8.4).
+        # Reuses whatever the reconstruction package already produced. It does
+        # NOT re-run YOLO, segmentation, depth estimation or flood analysis, and
+        # by default it does not start a new reconstruction either - a full run
+        # takes minutes, so that is an explicit decision (see RECONSTRUCTION_AUTORUN).
         job["status"] = "reconstructing"
         job["progress"] = 94
 
-        # Step 7: Georeferencing (placeholder - NOT implemented)
+        reconstruction = await asyncio.to_thread(
+            ensure_reconstruction,
+            job_id,
+            settings.RECONSTRUCTION_AUTORUN,
+        )
+        job["reconstruction_status"] = reconstruction.get("status")
+
+        # Step 7: Georeferencing (Phase 8.5, honest by construction).
+        # Reports unavailable unless real GPS/IMU metadata exists for the job.
         job["status"] = "georeferencing"
         job["progress"] = 97
+
+        georeferencing = reconstruction.get("georeferencing", {})
+        job["georeferenced"] = bool(reconstruction.get("georeferenced", False))
+        job["georeferencing_status"] = georeferencing.get("status")
 
         # Step 8: Aggregate real results from the generated artifacts.
         results = await asyncio.to_thread(build_results, job_id)

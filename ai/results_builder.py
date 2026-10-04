@@ -219,6 +219,67 @@ def _merge_not_measured(disasters: Dict[str, Any]) -> List[str]:
                 merged.append(item)
     return merged
 
+def _reconstruction_section(data_path: Path, job_id: str) -> Dict[str, Any]:
+    """Real 3D reconstruction section for ``results.json`` (Phase 8.6).
+
+    Reuses whatever the reconstruction package already wrote. Never fabricates
+    a reconstruction, a scale or a coordinate: if nothing was reconstructed the
+    section reports ``status: "not_available"``.
+    """
+    rec_dir = data_path / job_id / "reconstruction"
+
+    sparse = _load_json(rec_dir / "reconstruction_global.json") or {}
+    dense = _load_json(rec_dir / "dense_reconstruction.json") or {}
+
+    sparse_points = sparse.get("n_points", sparse.get("sparse_point_count"))
+    dense_points = dense.get("n_dense_points", dense.get("dense_point_count"))
+
+    glb = rec_dir / "dense_points_global.glb"
+    ply = rec_dir / "dense_points_global.ply"
+
+    has_any = glb.is_file() or ply.is_file() or bool(sparse_points) or bool(dense_points)
+    if not has_any:
+        status_value = "not_available"
+    elif dense_points or glb.is_file():
+        status_value = "success"
+    else:
+        status_value = "partial"
+
+    # Georeferencing is reported, never invented. Imported lazily so results
+    # aggregation keeps working even if the module is unavailable.
+    try:
+        from reconstruction.georeferencing import georeference_job
+
+        georef = georeference_job(job_id, data_path).to_manifest()
+    except Exception as exc:  # pragma: no cover - defensive
+        georef = {
+            "status": "unavailable",
+            "georeferenced": False,
+            "reason": f"Georeferencing could not be evaluated: {exc}",
+        }
+
+    return {
+        "status": status_value,
+        "kind": "denser_point_cloud" if status_value == "success" else None,
+        "phase": "8.1-8.5",
+        "sparse_point_count": sparse_points,
+        "dense_point_count": dense_points,
+        "n_frames_registered": sparse.get("n_frames_registered"),
+        "coordinate_system": "local_up_to_scale",
+        "scale_status": "UP_TO_SCALE_NO_METRIC_UNITS",
+        "georeferenced": bool(georef.get("georeferenced", False)),
+        "georeferencing_status": georef.get("status"),
+        "georeferencing_reason": georef.get("reason"),
+        "artifact": {
+            "glb_available": glb.is_file(),
+            "ply_available": ply.is_file(),
+            "endpoint": f"/api/v1/reconstruction/{job_id}/artifact",
+            "primary": "dense_points_global.glb" if glb.is_file() else None,
+        },
+        "limitations": georef.get("limitations", []),
+    }
+
+
 def build_results(job_id: str, data_dir: Union[str, Path] = "data") -> Dict[str, Any]:
     """Assemble an honest results payload from real artifacts for ``job_id``."""
     data_path = Path(data_dir)
@@ -237,6 +298,7 @@ def build_results(job_id: str, data_dir: Union[str, Path] = "data") -> Dict[str,
     depth_stats = _relative_depth_stats(analysis_dir / "depth")
 
     disaster = _disaster_sections(analysis_dir)
+    reconstruction = _reconstruction_section(data_path, job_id)
 
     return {
         "job_id": job_id,
@@ -244,6 +306,7 @@ def build_results(job_id: str, data_dir: Union[str, Path] = "data") -> Dict[str,
             "detector": "YOLO11n COCO",
             "segmentation": "SegFormer-B0 ADE20K",
             "depth": "Depth Anything V2 Small (relative)",
+            "reconstruction": "OpenCV SfM + Depth Anything anchored back-projection",
         },
         "categories": {
             "people": _detection_category(detections, PEOPLE_CLASSES),
@@ -276,6 +339,7 @@ def build_results(job_id: str, data_dir: Union[str, Path] = "data") -> Dict[str,
             },
         },
         "relative_depth": depth_stats,
+        "reconstruction": reconstruction,
         "disasters": disaster["disasters"],
         "disaster_modules_available": disaster["available"],
         "disaster_modules_not_implemented": disaster["pending"],
