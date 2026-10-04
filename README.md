@@ -1,4 +1,4 @@
-# Cheel Nazar (चील नज़र) 🦅
+# Cheel Nazar  
 
 > **Tactical Drone Reconnaissance & 3D Geospatial Intelligence Engine**
 > 
