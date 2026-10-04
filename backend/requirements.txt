@@ -3,12 +3,14 @@ uvicorn[standard]>=0.30.0
 pydantic>=2.7.0
 python-multipart>=0.0.9
 
-# ── Dev / Test dependencies ────────────────────────────────────────────────
-# Install these to run the test suite:  pip install pytest httpx
+numpy>=1.26
+opencv-python>=4.9.0.80
+Pillow>=10.2.0
+
+torch>=2.2.0
+torchvision>=0.17.0
+ultralytics>=8.1.0
+transformers>=4.39.0
+
 pytest>=8.0.0
 httpx>=0.27.0
-
-# ── Phase 6 (future) ──────────────────────────────────────────────────────
-# Uncomment when YOLO integration is ready:
-# ultralytics>=8.0.0
-# Pillow>=10.0.0

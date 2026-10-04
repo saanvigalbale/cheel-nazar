@@ -9,6 +9,35 @@ from transformers import AutoImageProcessor, SegformerForSemanticSegmentation
 
 MODEL_NAME = "nvidia/segformer-b0-finetuned-ade-512-512"
 
+# ADE20K class (as returned by the model's id2label) -> disaster-relevant category.
+CATEGORY_CLASSES = {
+    "structures": ["building", "house", "wall", "skyscraper", "bridge", "tower"],
+    "roads": ["road", "sidewalk", "path", "runway", "dirt track"],
+    "vegetation": ["tree", "plant", "palm", "grass", "flower"],
+    "terrain": ["earth", "land", "mountain", "hill", "rock", "sand", "field"],
+    "water": ["water", "sea", "river", "lake", "waterfall", "swimming pool"],
+}
+
+
+def category_coverage(coverage):
+    """Sum per-class coverage percentages into disaster-relevant categories.
+
+    `coverage` maps an ADE20K class label -> {"pixels": int, "percentage": float}.
+    ADE20K is a semantic (argmax) segmentation, so class pixel sets are disjoint
+    and category percentages are simple sums (no double counting).
+    """
+    categories = {}
+
+    for category, labels in CATEGORY_CLASSES.items():
+        total = 0.0
+        for label in labels:
+            entry = coverage.get(label)
+            if entry:
+                total += float(entry["percentage"])
+        categories[category] = round(total, 2)
+
+    return categories
+
 
 class SceneSegmenter:
     def __init__(self, model_name=MODEL_NAME, device=None):
@@ -113,8 +142,6 @@ class SceneSegmenter:
             exist_ok=True
         )
 
-        results = []
-
         frame_files = sorted(
             frames_dir.glob("*.jpg")
         )
@@ -125,6 +152,11 @@ class SceneSegmenter:
             )
 
         total_frames = len(frame_files)
+        results = []
+
+        # Pixel-weighted accumulators for whole-job category coverage.
+        category_pixels = {category: 0 for category in CATEGORY_CLASSES}
+        total_pixels = 0
 
         for index, frame_path in enumerate(
             frame_files,
@@ -146,11 +178,49 @@ class SceneSegmenter:
             )
 
             coverage = self.calculate_coverage(mask)
+            categories = category_coverage(coverage)
+
+            height, width = mask.shape
 
             results.append({
                 "frame": frame_path.name,
-                "coverage": coverage
+                "frame_size": {
+                    "width": int(width),
+                    "height": int(height)
+                },
+                "coverage": coverage,
+                "categories": categories
             })
+
+            total_pixels += int(mask.size)
+            for category, labels in CATEGORY_CLASSES.items():
+                for label in labels:
+                    entry = coverage.get(label)
+                    if entry:
+                        category_pixels[category] += int(entry["pixels"])
+
+        aggregate_categories = {
+            category: (
+                round(100 * pixels / total_pixels, 2)
+                if total_pixels
+                else 0.0
+            )
+            for category, pixels in category_pixels.items()
+        }
+
+        summary = {
+            "model": MODEL_NAME,
+            # Class-id -> label map so downstream analyzers can decode the
+            # stored mask PNGs without re-loading the model. Older summaries
+            # lack this and fall back to the checkpoint configuration.
+            "class_id_map": {
+                int(class_id): str(label).strip()
+                for class_id, label in self.id2label.items()
+            },
+            "frames_processed": len(results),
+            "categories": aggregate_categories,
+            "frames": results
+        }
 
         summary_path = output_dir / "summary.json"
 
@@ -159,7 +229,7 @@ class SceneSegmenter:
             "w"
         ) as file:
             json.dump(
-                results,
+                summary,
                 file,
                 indent=2
             )
@@ -167,8 +237,30 @@ class SceneSegmenter:
         return {
             "frames_processed": len(results),
             "summary_file": str(summary_path),
-            "output_dir": str(output_dir)
+            "output_dir": str(output_dir),
+            "categories": aggregate_categories
         }
+
+
+def segment_frames(
+    frames_dir,
+    output_dir,
+    device=None
+):
+    """Segment every frame in frames_dir, writing masks + summary.json.
+
+    Convenience wrapper (mirrors ai.depth_estimator.estimate_depth_for_frames)
+    so the job pipeline can run segmentation without constructing a
+    SceneSegmenter instance itself.
+    """
+    segmenter = SceneSegmenter(
+        device=device
+    )
+
+    return segmenter.process_frames(
+        frames_dir,
+        output_dir
+    )
 
 
 def process_job(

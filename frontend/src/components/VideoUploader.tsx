@@ -13,6 +13,7 @@ import {
   AlertCircle,
   Film
 } from 'lucide-react';
+import { API_BASE_URL } from '../api/client.ts';
 
 const ALLOWED_EXTENSIONS = ['.mp4', '.mov', '.avi', '.mkv'];
 const MAX_SIZE_MB = 500;
@@ -140,7 +141,7 @@ export const VideoUploader: React.FC<VideoUploaderProps> = ({
     formData.append('file', selectedFile);
 
     const xhr = new XMLHttpRequest();
-    xhr.open('POST', 'http://127.0.0.1:8000/api/v1/video/upload');
+    xhr.open('POST', `${API_BASE_URL}/api/v1/video/upload`);
     xhr.setRequestHeader('Accept', 'application/json');
 
     xhr.upload.onprogress = (event) => {
@@ -175,7 +176,7 @@ export const VideoUploader: React.FC<VideoUploaderProps> = ({
 
     xhr.onerror = () => {
       setIsUploading(false);
-      setErrorMessage('Network error: Unable to connect to backend server at http://127.0.0.1:8000. Ensure the FastAPI server is running.');
+      setErrorMessage(`Network error: Unable to connect to backend server at ${API_BASE_URL}. Ensure the FastAPI server is running.`);
     };
 
     xhr.send(formData);

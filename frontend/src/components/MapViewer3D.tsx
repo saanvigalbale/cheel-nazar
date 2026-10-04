@@ -1,8 +1,20 @@
 import React, { useState } from 'react';
 import { Box, Compass, Crosshair, Layers, Maximize2, RotateCw, ZoomIn, ZoomOut, Eye } from 'lucide-react';
+import { isPlaceholderResults } from '../api/client.ts';
+import type { JobResults } from '../types/job.ts';
 
-export const MapViewer3D: React.FC = () => {
+interface MapViewer3DProps {
+  isComplete: boolean;
+  results: JobResults | null;
+  resultsLoading: boolean;
+}
+
+export const MapViewer3D: React.FC<MapViewer3DProps> = ({ isComplete, results, resultsLoading }) => {
   const [renderMode, setRenderMode] = useState<'points' | 'mesh' | 'ortho'>('points');
+
+  // Reconstruction / georeferencing are not implemented; current results are mock.
+  const georefUnavailable = isPlaceholderResults(results);
+  const geo = georefUnavailable ? undefined : results?.georeference;
 
   return (
     <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-5 shadow-lg backdrop-blur-sm flex flex-col h-full">
@@ -77,10 +89,10 @@ export const MapViewer3D: React.FC = () => {
             <span>GEOREFERENCE OVERLAY</span>
           </div>
           <div>CRS: <span className="text-slate-200">EPSG:4326 (WGS 84 / UTM)</span></div>
-          <div>LAT: <span className="text-slate-200">--.------° N</span></div>
-          <div>LON: <span className="text-slate-200">--.------° E</span></div>
-          <div>ALT (MSL): <span className="text-slate-200">---.- m</span></div>
-          <div>GSD: <span className="text-slate-200">~2.4 cm/px</span></div>
+          <div>LAT: <span className="text-slate-200">{geo ? `${geo.lat.toFixed(6)}° N` : '--.------° N'}</span></div>
+          <div>LON: <span className="text-slate-200">{geo ? `${geo.lon.toFixed(6)}° E` : '--.------° E'}</span></div>
+          <div>ALT (MSL): <span className="text-slate-200">{geo ? `${geo.altitude_m.toFixed(1)} m` : '---.- m'}</span></div>
+          <div>STATUS: <span className="text-amber-400">{georefUnavailable ? 'NOT IMPLEMENTED' : 'AVAILABLE'}</span></div>
         </div>
 
         {/* Center UI Placeholder Notification */}
@@ -92,10 +104,18 @@ export const MapViewer3D: React.FC = () => {
             3D Viewport Standby
           </h3>
           <p className="text-xs text-slate-400 leading-relaxed mb-3">
-            Three.js / WebGL visualization layer initialized. Waiting for reconstructed point cloud or textured mesh input.
+            {isComplete
+              ? 'Reconstruction is not implemented yet - no point cloud or mesh is available to display.'
+              : 'Three.js / WebGL visualization layer initialized. Waiting for reconstructed point cloud or textured mesh input.'}
           </p>
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-slate-900 border border-slate-700 text-[10px] font-mono text-cyan-300">
-            <span>AWAITING SFM OUTPUT</span>
+            <span>
+              {resultsLoading
+                ? 'LOADING RESULTS'
+                : isComplete
+                ? 'RECONSTRUCTION NOT IMPLEMENTED'
+                : 'AWAITING SFM OUTPUT'}
+            </span>
           </div>
         </div>
 

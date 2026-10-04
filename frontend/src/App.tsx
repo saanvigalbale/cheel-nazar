@@ -7,25 +7,47 @@ import { AIAnalysis } from './components/AIAnalysis.tsx';
 import { Measurements } from './components/Measurements.tsx';
 import { ConfidenceMetric } from './components/ConfidenceMetric.tsx';
 import { Terminal } from 'lucide-react';
+import {
+  ApiError,
+  getJobResults,
+  getJobStatus,
+  healthCheck,
+  startProcessing,
+} from './api/client.ts';
+import type { JobResults, JobStatusResponse } from './types/job.ts';
+
+/** Polling cadence for job status while the pipeline is running. */
+const POLL_INTERVAL_MS = 2500;
+
+const IN_PROGRESS_STATUSES: JobStatusResponse['status'][] = [
+  'queued',
+  'extracting_frames',
+  'detecting_objects',
+  'segmenting_scene',
+  'estimating_depth',
+  'analyzing_hazards',
+  'reconstructing',
+  'georeferencing',
+];
 
 export function App() {
   const [backendHealthy, setBackendHealthy] = useState<boolean | null>(null);
   const [isCheckingHealth, setIsCheckingHealth] = useState<boolean>(false);
   const [activeJob, setActiveJob] = useState<{ job_id: string; filename: string } | null>(null);
+  const [jobStatus, setJobStatus] = useState<JobStatusResponse | null>(null);
+  const [results, setResults] = useState<JobResults | null>(null);
+  const [resultsLoading, setResultsLoading] = useState<boolean>(false);
+  const [resultsError, setResultsError] = useState<string | null>(null);
+  const [isStarting, setIsStarting] = useState<boolean>(false);
+  const [startError, setStartError] = useState<string | null>(null);
+  const [isPolling, setIsPolling] = useState<boolean>(false);
+  const [pollError, setPollError] = useState<string | null>(null);
 
   const checkHealth = useCallback(async () => {
     setIsCheckingHealth(true);
     try {
-      // Connect to FastAPI backend health endpoint
-      const response = await fetch('http://127.0.0.1:8000/health', {
-        method: 'GET',
-        headers: { 'Accept': 'application/json' },
-      });
-      if (response.ok) {
-        setBackendHealthy(true);
-      } else {
-        setBackendHealthy(false);
-      }
+      await healthCheck();
+      setBackendHealthy(true);
     } catch {
       setBackendHealthy(false);
     } finally {
@@ -40,6 +62,123 @@ export function App() {
     return () => clearInterval(timer);
   }, [checkHealth]);
 
+  // Poll job status while the pipeline is running.
+  useEffect(() => {
+    if (!isPolling || !activeJob) return;
+
+    let cancelled = false;
+
+    const poll = async () => {
+      try {
+        const status = await getJobStatus(activeJob.job_id);
+        if (cancelled) return;
+        setJobStatus(status);
+        setPollError(null);
+        // Stop polling once the job reaches a terminal state.
+        if (status.status === 'done' || status.status === 'failed') {
+          setIsPolling(false);
+        }
+      } catch (err) {
+        if (cancelled) return;
+        setPollError(
+          err instanceof ApiError && err.status === 404
+            ? 'Job not found on the backend.'
+            : 'Lost connection to the backend while polling job status.',
+        );
+        setIsPolling(false);
+      }
+    };
+
+    poll();
+    const timer = setInterval(poll, POLL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [isPolling, activeJob]);
+
+  const jobStatusValue = jobStatus?.status ?? null;
+
+  // Fetch job results once processing has completed.
+  useEffect(() => {
+    if (!activeJob || jobStatusValue !== 'done') return;
+
+    let cancelled = false;
+    setResultsLoading(true);
+    setResultsError(null);
+
+    getJobResults(activeJob.job_id)
+      .then((data) => {
+        if (!cancelled) setResults(data);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setResults(null);
+        setResultsError(
+          err instanceof ApiError && err.status === 404
+            ? 'Results are not available yet.'
+            : 'Failed to load job results.',
+        );
+      })
+      .finally(() => {
+        if (!cancelled) setResultsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeJob, jobStatusValue]);
+
+  // Store the freshly uploaded job and reset any previous run state.
+  const handleUploadSuccess = useCallback(
+    async (result: { job_id: string; filename: string }) => {
+      setActiveJob({ job_id: result.job_id, filename: result.filename });
+      setJobStatus(null);
+      setResults(null);
+      setResultsError(null);
+      setStartError(null);
+      setPollError(null);
+      setIsPolling(false);
+      try {
+        const status = await getJobStatus(result.job_id);
+        setJobStatus(status);
+      } catch {
+        // Status will be populated once processing starts.
+      }
+    },
+    [],
+  );
+
+  // POST /api/v1/jobs/{job_id}/process, then begin polling.
+  const handleStartProcessing = useCallback(async () => {
+    if (!activeJob || isStarting) return;
+    setIsStarting(true);
+    setStartError(null);
+    setPollError(null);
+    try {
+      await startProcessing(activeJob.job_id);
+      setIsPolling(true);
+    } catch (err) {
+      // 409 → the job is already running; just resume polling.
+      if (err instanceof ApiError && err.status === 409) {
+        setIsPolling(true);
+      } else {
+        setStartError(
+          err instanceof ApiError ? err.detail : 'Failed to start processing.',
+        );
+      }
+    } finally {
+      setIsStarting(false);
+    }
+  }, [activeJob, isStarting]);
+
+  const isProcessing = jobStatusValue !== null && IN_PROGRESS_STATUSES.includes(jobStatusValue);
+  const isComplete = jobStatusValue === 'done';
+  const processingError =
+    jobStatusValue === 'failed'
+      ? jobStatus?.error ?? 'Processing failed.'
+      : startError ?? pollError;
+
   return (
     <div className="min-h-screen bg-[#0a0d14] text-slate-100 flex flex-col font-sans selection:bg-cyan-500 selection:text-black">
       {/* Top Navigation & Status Bar */}
@@ -47,6 +186,8 @@ export function App() {
         backendHealthy={backendHealthy}
         onRefreshHealth={checkHealth}
         isCheckingHealth={isCheckingHealth}
+        pipelineStatus={jobStatusValue}
+        progress={jobStatus?.progress ?? null}
       />
 
       {/* Main Dashboard Grid */}
@@ -56,31 +197,58 @@ export function App() {
           <div className="lg:col-span-5">
             <VideoUploader
               activeJobId={activeJob?.job_id}
-              onUploadSuccess={(result) => setActiveJob(result)}
+              onUploadSuccess={handleUploadSuccess}
             />
           </div>
           <div className="lg:col-span-7">
-            <ProcessingStatus />
+            <ProcessingStatus
+              jobStatus={jobStatus}
+              hasActiveJob={activeJob !== null}
+              isStarting={isStarting}
+              isPolling={isPolling}
+              errorMessage={processingError}
+              onStartProcessing={handleStartProcessing}
+            />
           </div>
         </section>
 
         {/* 3D Map Viewport & AI Hazard Detection */}
         <section className="grid grid-cols-1 lg:grid-cols-12 gap-6">
           <div className="lg:col-span-7">
-            <MapViewer3D />
+            <MapViewer3D
+              isComplete={isComplete}
+              results={results}
+              resultsLoading={resultsLoading}
+            />
           </div>
           <div className="lg:col-span-5">
-            <AIAnalysis />
+            <AIAnalysis
+              results={results}
+              resultsLoading={resultsLoading}
+              resultsError={resultsError}
+              isComplete={isComplete}
+              isProcessing={isProcessing}
+            />
           </div>
         </section>
 
         {/* Tactical Measurements & Uncertainty Analysis */}
         <section className="grid grid-cols-1 lg:grid-cols-12 gap-6">
           <div className="lg:col-span-7">
-            <Measurements />
+            <Measurements
+              isComplete={isComplete}
+              results={results}
+              resultsLoading={resultsLoading}
+              resultsError={resultsError}
+            />
           </div>
           <div className="lg:col-span-5">
-            <ConfidenceMetric />
+            <ConfidenceMetric
+              isComplete={isComplete}
+              results={results}
+              resultsLoading={resultsLoading}
+              resultsError={resultsError}
+            />
           </div>
         </section>
       </main>
@@ -95,7 +263,7 @@ export function App() {
           <div className="flex items-center gap-4 text-[11px]">
             <span>FRONTEND: REACT 18 + VITE + TS</span>
             <span>BACKEND: FASTAPI + UVICORN</span>
-            <span className="text-cyan-400">READY FOR PIPELINE INTEGRATION</span>
+            <span className="text-cyan-400">PIPELINE INTEGRATION: PHASE 7</span>
           </div>
         </div>
       </footer>

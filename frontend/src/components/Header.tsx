@@ -1,18 +1,54 @@
 import React, { useEffect, useState } from 'react';
 import { Eye, Shield, Activity, Radio, Cpu, RefreshCw } from 'lucide-react';
+import type { JobStatusValue } from '../types/job.ts';
 
 interface HeaderProps {
   backendHealthy: boolean | null;
   onRefreshHealth: () => void;
   isCheckingHealth: boolean;
+  pipelineStatus: JobStatusValue | null;
+  progress: number | null;
 }
+
+const PIPELINE_LABELS: Record<JobStatusValue, string> = {
+  uploaded: 'UPLOADED',
+  queued: 'QUEUED',
+  extracting_frames: 'EXTRACTING',
+  detecting_objects: 'DETECTING',
+  segmenting_scene: 'SEGMENTING',
+  estimating_depth: 'DEPTH',
+  analyzing_hazards: 'DISASTER ANALYSIS',
+  reconstructing: 'RECONSTRUCT',
+  georeferencing: 'GEO-REF',
+  done: 'COMPLETE',
+  failed: 'FAILED',
+};
 
 export const Header: React.FC<HeaderProps> = ({
   backendHealthy,
   onRefreshHealth,
   isCheckingHealth,
+  pipelineStatus,
+  progress,
 }) => {
   const [time, setTime] = useState<string>('');
+
+  const pipelineText = pipelineStatus
+    ? `${PIPELINE_LABELS[pipelineStatus]}${
+        progress != null && pipelineStatus !== 'done' && pipelineStatus !== 'failed'
+          ? ` ${progress}%`
+          : ''
+      }`
+    : 'STANDBY';
+
+  const pipelineColor =
+    pipelineStatus === 'failed'
+      ? 'text-rose-400'
+      : pipelineStatus === 'done'
+      ? 'text-emerald-400'
+      : pipelineStatus
+      ? 'text-cyan-400'
+      : 'text-amber-400';
 
   useEffect(() => {
     const updateTime = () => {
@@ -62,7 +98,7 @@ export const Header: React.FC<HeaderProps> = ({
           <div className="flex items-center gap-2 px-3 py-1.5 rounded bg-slate-900/90 border border-slate-800">
             <Cpu className="w-3.5 h-3.5 text-slate-400" />
             <span className="text-slate-400">PIPELINE:</span>
-            <span className="text-amber-400 font-semibold">STANDBY</span>
+            <span className={`font-semibold ${pipelineColor}`}>{pipelineText}</span>
           </div>
 
           {/* Backend Health Badge */}

@@ -15,7 +15,12 @@ if str(settings.ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(settings.ROOT_DIR))
 
 from ai.yolo_detector import detect_objects
+from ai.scene_segmenter import segment_frames
 from ai.depth_estimator import estimate_depth_for_frames
+from ai.results_builder import build_results
+from ai.disaster import ArtifactBundle
+from ai.disaster import available as registered_hazards
+from ai.disaster import get as get_hazard_analyzer
 
 router = APIRouter()
 
@@ -36,53 +41,31 @@ def _results_path(job_id: str) -> Path:
     return settings.DATA_DIR / job_id / "results.json"
 
 
-def _build_mock_results(job_id: str) -> Dict[str, Any]:
-    return {
-        "job_id": job_id,
-        "model_url": None,
-        "georeference": {
-            "lat": 28.6139,
-            "lon": 77.2090,
-            "altitude_m": 120.0
-        },
-        "detections": [
-            {
-                "label": "building",
-                "count": 14,
-                "avg_confidence": 0.91
-            },
-            {
-                "label": "vehicle",
-                "count": 6,
-                "avg_confidence": 0.84
-            },
-            {
-                "label": "person",
-                "count": 3,
-                "avg_confidence": 0.72
-            },
-            {
-                "label": "obstacle",
-                "count": 5,
-                "avg_confidence": 0.78
-            }
-        ],
-        "measurements": {
-            "area_sq_m": 5400.0,
-            "max_building_height_m": 18.5,
-            "scene_width_m": 92.0,
-            "scene_length_m": 58.7
-        },
-        "damage_analysis": {
-            "damaged_structures": 3,
-            "severity": "moderate",
-            "affected_area_pct": 12.4
-        },
-        "uncertainty": {
-            "overall_confidence": 0.82,
-            "low_confidence_regions": 4
-        }
-    }
+def _disaster_summary_path(job_id: str) -> Path:
+    return settings.DATA_DIR / job_id / "analysis" / "disaster" / "disasters_summary.json"
+
+
+def _analyze_hazards(job_id: str) -> Dict[str, Any]:
+    """Run every registered disaster analyzer over the Phase 6A artifacts.
+
+    Hazard-agnostic: analyzers are discovered from the ``ai.disaster`` registry,
+    so no hazard-specific logic lives in this module. The analyzers only read
+    artifacts already produced by the detection / segmentation / depth stages -
+    no model inference happens here.
+    """
+    bundle = ArtifactBundle(job_id, str(settings.DATA_DIR))
+
+    disasters: Dict[str, Any] = {}
+    for hazard_name in registered_hazards():
+        analyzer = get_hazard_analyzer(hazard_name)()
+        disasters[hazard_name] = analyzer.analyze(bundle)
+
+    return {"disasters": disasters}
+
+
+# Phase 6A: `_build_mock_results()` was removed. Results are now aggregated from
+# real model artifacts (YOLO detections, SegFormer coverage, relative depth) by
+# `ai.results_builder.build_results()`.
 
 
 async def _run_pipeline(job_id: str) -> None:
@@ -94,32 +77,33 @@ async def _run_pipeline(job_id: str) -> None:
         if video_path is None:
             raise FileNotFoundError("Uploaded video not found.")
 
-        # Step 1: Extract frames (Phase 4)
+        analysis_dir = settings.DATA_DIR / job_id / "analysis"
+
+        # Step 1: Extract frames
         job["status"] = "extracting_frames"
         job["progress"] = 10
 
-        output_dir = settings.DATA_DIR / job_id / "frames"
+        frames_dir = settings.DATA_DIR / job_id / "frames"
 
         result = await asyncio.to_thread(
             extract_frames,
             str(video_path),
-            str(output_dir),
+            str(frames_dir),
             fps=2.0
         )
 
         job["progress"] = 25
         job["frames_extracted"] = result["saved_frames"]
 
-        # Step 2: AI YOLO Object Detection (Phase 6.2)
+        # Step 2: YOLO11n object detection
         job["status"] = "detecting_objects"
         job["progress"] = 35
 
-        analysis_dir = settings.DATA_DIR / job_id / "analysis"
         detections_file = analysis_dir / "detections.json"
 
         detections = await asyncio.to_thread(
             detect_objects,
-            frames_dir=output_dir,
+            frames_dir=frames_dir,
             output_file=detections_file,
             conf_threshold=0.25,
         )
@@ -127,38 +111,70 @@ async def _run_pipeline(job_id: str) -> None:
         job["detections_count"] = len(detections)
         job["progress"] = 55
 
-        # Step 3: AI Monocular Depth Estimation (Phase 6.4)
+        # Step 3: SegFormer-B0 ADE20K semantic segmentation
+        job["status"] = "segmenting_scene"
+        job["progress"] = 60
+
+        segmentation_dir = analysis_dir / "segmentation"
+
+        segmentation = await asyncio.to_thread(
+            segment_frames,
+            frames_dir=frames_dir,
+            output_dir=segmentation_dir,
+        )
+
+        job["segmentation_frames_count"] = segmentation["frames_processed"]
+        job["progress"] = 72
+
+        # Step 4: Depth Anything V2 (relative depth only)
         job["status"] = "estimating_depth"
-        job["progress"] = 65
+        job["progress"] = 78
 
         depth_dir = analysis_dir / "depth"
 
         depth_maps = await asyncio.to_thread(
             estimate_depth_for_frames,
-            frames_dir=output_dir,
+            frames_dir=frames_dir,
             output_dir=depth_dir,
         )
 
         job["depth_maps_count"] = len(depth_maps)
-        job["progress"] = 80
+        job["progress"] = 88
 
-        # Step 4: 3D Reconstruction (Phase 5 placeholder)
+        # Step 5: Disaster intelligence (artifacts only - no model inference)
+        job["status"] = "analyzing_hazards"
+        job["progress"] = 91
+
+        disaster_payload = await asyncio.to_thread(_analyze_hazards, job_id)
+
+        disaster_path = _disaster_summary_path(job_id)
+        disaster_path.parent.mkdir(parents=True, exist_ok=True)
+        disaster_path.write_text(
+            json.dumps(disaster_payload, indent=2),
+            encoding="utf-8",
+        )
+
+        job["hazards_analyzed"] = sorted(disaster_payload["disasters"])
+
+        # Step 6: 3D reconstruction (placeholder - NOT implemented)
         job["status"] = "reconstructing"
-        await asyncio.sleep(2)
-        job["progress"] = 90
+        job["progress"] = 94
 
-        # Step 5: Georeferencing (placeholder)
+        # Step 7: Georeferencing (placeholder - NOT implemented)
         job["status"] = "georeferencing"
-        await asyncio.sleep(1)
-        job["progress"] = 100
+        job["progress"] = 97
+
+        # Step 8: Aggregate real results from the generated artifacts.
+        results = await asyncio.to_thread(build_results, job_id)
 
         out_path = _results_path(job_id)
         out_path.parent.mkdir(parents=True, exist_ok=True)
-
         out_path.write_text(
-            json.dumps(_build_mock_results(job_id), indent=2)
+            json.dumps(results, indent=2),
+            encoding="utf-8",
         )
 
+        job["progress"] = 100
         job["status"] = "done"
 
     except Exception as exc:
