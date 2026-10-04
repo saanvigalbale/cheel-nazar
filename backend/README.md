@@ -105,3 +105,105 @@ Invoke-RestMethod -Uri "http://127.0.0.1:8000/api/v1/video/upload" -Method Post 
     ]
   }
   ```
+
+---
+
+## Phase 5 — AI Detection Architecture
+
+### Overview
+
+Phase 5 introduces a **modular AI detection pipeline** with a clean interface
+so the `MockDetector` can be swapped for a real YOLO model (Phase 6) without
+changing the API or any callers.
+
+```
+Uploaded image
+     ↓
+POST /api/v1/ai/detect
+     ↓
+Validation (extension, size, empty-file check)
+     ↓
+BaseDetector.detect(image_path) → List[Detection]
+     ↓
+MockDetector  ──(Phase 6)──►  YOLODetector
+     ↓
+Structured JSON response
+```
+
+### Architecture
+
+| File | Role |
+|---|---|
+| `app/services/ai/detector.py` | `BaseDetector` abstract interface, `BoundingBox`, `Detection` dataclasses, `MockDetector` placeholder, module-level `detector` singleton |
+| `app/api/v1/endpoints/ai.py` | FastAPI endpoint — decoupled from detector implementation |
+| `app/api/v1/router.py` | Registers AI router at `/api/v1/ai` |
+| `tests/test_ai_detection.py` | 8 pytest tests — no model weights required |
+
+### Current Implementation
+
+> ⚠ **Phase 5 uses `MockDetector`** — a clearly-marked placeholder that
+> returns deterministic dummy data. **No YOLO weights are downloaded or loaded.**
+> Real inference will be integrated in Phase 6 via `YOLODetector(BaseDetector)`.
+
+### AI Detection Endpoint
+
+- **Endpoint**: `POST /api/v1/ai/detect`
+- **Content-Type**: `multipart/form-data`
+- **Supported Formats**: `.jpg`, `.jpeg`, `.png`, `.bmp`, `.tif`, `.tiff`
+- **Max Image Size**: 50 MB
+
+#### Example Request (cURL)
+```bash
+curl -X POST "http://127.0.0.1:8000/api/v1/ai/detect" \
+  -H "accept: application/json" \
+  -F "file=@frame_000001.jpg"
+```
+
+#### Example Request (PowerShell)
+```powershell
+$form = @{ file = Get-Item -Path ".\frame_000001.jpg" }
+Invoke-RestMethod -Uri "http://127.0.0.1:8000/api/v1/ai/detect" -Method Post -Form $form
+```
+
+#### Example Response — MockDetector (HTTP 200)
+```json
+{
+  "status": "success",
+  "model": "MockDetector-v0 (placeholder)",
+  "image_filename": "frame_000001.jpg",
+  "detections": [
+    {
+      "class_name": "mock_vehicle",
+      "confidence": 0.87,
+      "bbox": { "x1": 10.0, "y1": 20.0, "x2": 80.0, "y2": 60.0 },
+      "is_mock": true
+    }
+  ]
+}
+```
+
+> `"is_mock": true` on every detection indicates fabricated data from the placeholder.
+
+#### Error Responses
+
+| HTTP | Cause |
+|------|-------|
+| 400 | Missing/empty filename, unsupported extension, empty file body |
+| 413 | Image exceeds 50 MB |
+| 422 | `file` field missing entirely (FastAPI validation) |
+| 500 | Unexpected detector failure |
+
+### Running Tests
+```bash
+# from the backend directory
+pip install pytest httpx
+python -m pytest tests/ -v
+```
+
+### Phase 6 Integration (future)
+Replace the `detector` singleton in `app/services/ai/detector.py`:
+```python
+# Phase 6 — swap one line, nothing else changes
+from app.services.ai.yolo_detector import YOLODetector
+detector: BaseDetector = YOLODetector(model_path="yolov8n.pt")
+```
