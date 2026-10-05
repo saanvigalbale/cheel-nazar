@@ -138,8 +138,10 @@ export function App() {
   }, [activeJob, jobStatusValue]);
 
   // Fetch the real 3D reconstruction (Phases 8.1-8.6) once a job is known.
-  // Re-fetched while the reconstruct stage is running so the viewer picks the
-  // cloud up as soon as it exists.
+  // The existing job-status poll drives the refresh: every pipeline stage
+  // transition (including the final "done") re-fetches the reconstruction
+  // metadata, so the viewer picks the cloud up as soon as the backend
+  // reports one — no second polling loop is needed.
   useEffect(() => {
     if (!activeJob) {
       setReconstruction(null);
@@ -173,7 +175,7 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, [activeJob, isPolling]);
+  }, [activeJob, isPolling, jobStatusValue]);
 
   // Store the freshly uploaded job and reset any previous run state.
   const handleUploadSuccess = useCallback(

@@ -109,6 +109,8 @@ export const MapViewer3D: React.FC<MapViewer3DProps> = ({
   useEffect(() => {
     if (!artifactUrl || !containerRef.current) return;
 
+    let disposed = false;
+
     const container = containerRef.current;
     let renderer: WebGLRenderer;
     try {
@@ -673,5 +675,3 @@ export const MapViewer3D: React.FC<MapViewer3DProps> = ({
     </div>
   );
 };
-
-    let disposed = false;
