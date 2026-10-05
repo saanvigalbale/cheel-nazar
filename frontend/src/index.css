@@ -10,7 +10,7 @@
   }
 }
 
-/* Custom tactical grid for 3D viewer placeholder */
+/* Tactical grid used behind the 3D viewer viewport */
 .tactical-grid {
   background-size: 32px 32px;
   background-image: 

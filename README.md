@@ -16,7 +16,7 @@ cheel-nazar/
 │   │   │   ├── Header.tsx           # Mission status, telemetry & backend connectivity
 │   │   │   ├── VideoUploader.tsx    # Drone video & telemetry ingestion dropzone
 │   │   │   ├── ProcessingStatus.tsx # End-to-end photogrammetry pipeline stepper
-│   │   │   ├── MapViewer3D.tsx      # 3D viewport canvas placeholder (Three.js ready)
+│   │   │   ├── MapViewer3D.tsx      # Three.js point-cloud viewer (loads the real GLB) + export
 │   │   │   ├── AIAnalysis.tsx       # AI damage, vehicle & obstacle detection
 │   │   │   ├── Measurements.tsx     # Distance, area, volume & elevation tools
 │   │   │   └── ConfidenceMetric.tsx # Photogrammetric uncertainty & QA/QC metrics

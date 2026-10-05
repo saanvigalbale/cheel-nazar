@@ -9,7 +9,7 @@ import {
   Terminal,
   XCircle,
 } from 'lucide-react';
-import type { JobStatusResponse, JobStatusValue } from '../types/job.ts';
+import type { JobReconstruction, JobStatusResponse, JobStatusValue } from '../types/job.ts';
 
 type StageState = 'pending' | 'active' | 'completed' | 'failed';
 
@@ -31,6 +31,8 @@ interface ProcessingStatusProps {
   isPolling: boolean;
   errorMessage: string | null;
   onStartProcessing: () => void;
+  /** Live reconstruction outcome, so steps 07/08 report facts not placeholders. */
+  reconstruction?: JobReconstruction | null;
 }
 
 const PIPELINE_ORDER: JobStatusValue[] = [
@@ -98,16 +100,18 @@ const STAGES: Stage[] = [
   {
     id: '07',
     name: '3D Reconstruction',
-    module: 'Placeholder (not implemented)',
-    description: 'Sparse & dense reconstruction — not yet implemented in this prototype',
+    module: 'OpenCV SfM + Depth Anything',
+    description:
+      'Incremental Structure-from-Motion builds one coherent cloud, then depth maps densify it into an exportable point cloud',
     match: ['reconstructing'],
     enterProgress: 94,
   },
   {
     id: '08',
     name: 'Georeferencing & Export',
-    module: 'Placeholder (not implemented)',
-    description: 'Projection to UTM/WGS84 and export — not yet implemented in this prototype',
+    module: 'GPS-gated georeferencing + artifact export',
+    description:
+      'Georeferencing runs only when real GPS/telemetry exists; the reconstructed point cloud is always exportable',
     match: ['georeferencing'],
     enterProgress: 97,
   },
@@ -164,6 +168,49 @@ function stageIcon(state: StageState) {
   }
 }
 
+const countFormatter = new Intl.NumberFormat('en-US');
+
+/**
+ * Live outcome text for the reconstruction stages, so the stepper reports what
+ * actually happened instead of a fixed label. Georeferencing is deliberately
+ * "unavailable" when the source video carried no GPS/telemetry — that is an
+ * honest result, not a missing feature.
+ */
+function stageOutcome(
+  stage: Stage,
+  reconstruction: JobReconstruction | null | undefined,
+): string | null {
+  if (!reconstruction || stage.id === '01' || stage.id === '02') return null;
+
+  if (stage.id === '07') {
+    if (reconstruction.status === 'success' || reconstruction.status === 'partial') {
+      return `Reconstruction ready: ${countFormatter.format(
+        reconstruction.n_frames_registered ?? 0,
+      )} cameras, ${countFormatter.format(
+        reconstruction.sparse_point_count ?? 0,
+      )} sparse + ${countFormatter.format(
+        reconstruction.dense_point_count ?? 0,
+      )} denser points (up-to-scale).`;
+    }
+    if (reconstruction.status === 'not_available') {
+      return 'No reconstructed cloud for this job yet.';
+    }
+    return `Reconstruction reported "${reconstruction.status}".`;
+  }
+
+  if (stage.id === '08') {
+    if (reconstruction.georeferenced) {
+      return 'Georeferenced to WGS84 from real flight telemetry.';
+    }
+    const reason = reconstruction.georeferencing?.reason;
+    return reason
+      ? `Georeferencing unavailable for this video — ${reason}`
+      : 'Georeferencing unavailable for this video.';
+  }
+
+  return null;
+}
+
 export const ProcessingStatus: React.FC<ProcessingStatusProps> = ({
   jobStatus,
   hasActiveJob,
@@ -171,6 +218,7 @@ export const ProcessingStatus: React.FC<ProcessingStatusProps> = ({
   isPolling,
   errorMessage,
   onStartProcessing,
+  reconstruction,
 }) => {
   const status: JobStatusValue | null = jobStatus?.status ?? null;
   const progress = jobStatus?.progress ?? 0;
@@ -370,6 +418,7 @@ export const ProcessingStatus: React.FC<ProcessingStatusProps> = ({
               : state === 'failed'
               ? 'bg-rose-950/30 border-rose-500/50'
               : 'bg-slate-950/40 border-slate-800/80 hover:border-slate-700';
+          const outcome = stageOutcome(stage, reconstruction);
           const idClasses =
             state === 'completed'
               ? 'text-emerald-400 border-emerald-500/40'
@@ -398,6 +447,17 @@ export const ProcessingStatus: React.FC<ProcessingStatusProps> = ({
                   </span>
                 </div>
                 <p className="text-xs text-slate-500">{stage.description}</p>
+                {outcome && (
+                  <p
+                    className={`text-[11px] font-mono mt-1.5 rounded px-2 py-1 border ${
+                      stage.id === '08' && !reconstruction?.georeferenced
+                        ? 'bg-amber-950/30 border-amber-500/30 text-amber-300'
+                        : 'bg-emerald-950/25 border-emerald-500/30 text-emerald-300'
+                    }`}
+                  >
+                    {outcome}
+                  </p>
+                )}
               </div>
 
               <div className="shrink-0 flex items-center">{stageIcon(state)}</div>

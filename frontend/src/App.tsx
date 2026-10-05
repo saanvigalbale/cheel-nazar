@@ -9,12 +9,17 @@ import { ConfidenceMetric } from './components/ConfidenceMetric.tsx';
 import { Terminal } from 'lucide-react';
 import {
   ApiError,
+  getJobReconstruction,
   getJobResults,
   getJobStatus,
   healthCheck,
   startProcessing,
 } from './api/client.ts';
-import type { JobResults, JobStatusResponse } from './types/job.ts';
+import type {
+  JobReconstruction,
+  JobResults,
+  JobStatusResponse,
+} from './types/job.ts';
 
 /** Polling cadence for job status while the pipeline is running. */
 const POLL_INTERVAL_MS = 2500;
@@ -42,6 +47,9 @@ export function App() {
   const [startError, setStartError] = useState<string | null>(null);
   const [isPolling, setIsPolling] = useState<boolean>(false);
   const [pollError, setPollError] = useState<string | null>(null);
+  const [reconstruction, setReconstruction] = useState<JobReconstruction | null>(null);
+  const [reconstructionLoading, setReconstructionLoading] = useState<boolean>(false);
+  const [reconstructionError, setReconstructionError] = useState<string | null>(null);
 
   const checkHealth = useCallback(async () => {
     setIsCheckingHealth(true);
@@ -129,6 +137,44 @@ export function App() {
     };
   }, [activeJob, jobStatusValue]);
 
+  // Fetch the real 3D reconstruction (Phases 8.1-8.6) once a job is known.
+  // Re-fetched while the reconstruct stage is running so the viewer picks the
+  // cloud up as soon as it exists.
+  useEffect(() => {
+    if (!activeJob) {
+      setReconstruction(null);
+      setReconstructionError(null);
+      return;
+    }
+
+    let cancelled = false;
+    setReconstructionLoading(true);
+
+    getJobReconstruction(activeJob.job_id)
+      .then((data) => {
+        if (!cancelled) {
+          setReconstruction(data);
+          setReconstructionError(null);
+        }
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setReconstruction(null);
+        setReconstructionError(
+          err instanceof ApiError && err.status === 404
+            ? 'No reconstruction data for this job on the backend.'
+            : 'Could not reach the reconstruction endpoint on the backend.',
+        );
+      })
+      .finally(() => {
+        if (!cancelled) setReconstructionLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeJob, isPolling]);
+
   // Store the freshly uploaded job and reset any previous run state.
   const handleUploadSuccess = useCallback(
     async (result: { job_id: string; filename: string }) => {
@@ -208,6 +254,7 @@ export function App() {
               isPolling={isPolling}
               errorMessage={processingError}
               onStartProcessing={handleStartProcessing}
+              reconstruction={reconstruction}
             />
           </div>
         </section>
@@ -219,6 +266,13 @@ export function App() {
               isComplete={isComplete}
               results={results}
               resultsLoading={resultsLoading}
+              jobId={activeJob?.job_id ?? null}
+              reconstruction={reconstruction}
+              reconstructionLoading={reconstructionLoading}
+              reconstructionError={reconstructionError}
+              isReconstructing={
+                jobStatusValue === 'reconstructing' || jobStatusValue === 'georeferencing'
+              }
             />
           </div>
           <div className="lg:col-span-5">

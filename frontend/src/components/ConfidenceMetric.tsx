@@ -18,9 +18,13 @@ export const ConfidenceMetric: React.FC<ConfidenceMetricProps> = ({
 }) => {
   const [heatmapEnabled, setHeatmapEnabled] = useState(false);
 
-  // Backend results are still mock (model_url === null); never present them as real.
+  // No backend-reported uncertainty exists for this pipeline, and none is
+  // invented here. Accuracy figures would require a georeference (GNSS/IMU
+  // RMSE), which this footage does not have.
   const unavailable = isPlaceholderResults(results);
   const uncertainty = unavailable ? undefined : results?.uncertainty;
+  const reconstruction = results?.reconstruction;
+  const hasCloud = reconstruction?.status === 'success' || reconstruction?.status === 'partial';
 
   const notice = resultsLoading
     ? 'Loading job results...'
@@ -28,7 +32,7 @@ export const ConfidenceMetric: React.FC<ConfidenceMetricProps> = ({
     ? resultsError
     : !isComplete
     ? 'Confidence metrics will be available once the pipeline completes.'
-    : 'Confidence unavailable - reconstruction & georeferencing not yet implemented.';
+    : 'No accuracy figures are reported: the backend does not produce uncertainty metrics, and georeferencing precision requires GNSS/IMU telemetry that this video does not contain.';
 
   const metrics = [
     {
@@ -47,16 +51,20 @@ export const ConfidenceMetric: React.FC<ConfidenceMetricProps> = ({
     },
     {
       title: 'Georeferencing Precision',
-      value: '--',
-      subtext: 'GNSS/IMU sensor fusion RMSE',
-      status: 'UNAVAILABLE',
+      value: reconstruction?.georeferenced ? 'REPORTED' : '--',
+      subtext: reconstruction?.georeferenced
+        ? 'GNSS/IMU sensor fusion RMSE'
+        : 'No GPS/flight telemetry in this video',
+      status: reconstruction?.georeferenced ? 'REPORTED' : 'UNAVAILABLE',
       color: 'text-cyan-400',
     },
     {
       title: 'Camera Pose Covariance',
-      value: '--',
-      subtext: 'Bundle adjustment stability',
-      status: 'UNAVAILABLE',
+      value: hasCloud ? 'SOLVED' : '--',
+      subtext: hasCloud
+        ? `${reconstruction?.n_frames_registered ?? 0} cameras registered globally`
+        : 'No global pose solution for this job',
+      status: hasCloud ? 'REPORTED' : 'UNAVAILABLE',
       color: 'text-cyan-400',
     },
   ];

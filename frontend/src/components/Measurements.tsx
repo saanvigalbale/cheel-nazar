@@ -1,6 +1,6 @@
 import React from 'react';
-import { AlertTriangle, MapPin, Maximize, Mountain, Ruler } from 'lucide-react';
-import { isPlaceholderResults } from '../api/client.ts';
+import { AlertTriangle, MapPin, Maximize, Mountain, Ruler, Box } from 'lucide-react';
+import { hasReconstruction, isPlaceholderResults } from '../api/client.ts';
 import type { JobResults } from '../types/job.ts';
 
 interface MeasurementsProps {
@@ -9,6 +9,8 @@ interface MeasurementsProps {
   resultsLoading: boolean;
   resultsError: string | null;
 }
+
+const countFormatter = new Intl.NumberFormat('en-US');
 
 function formatMetric(value: number | undefined, unit: string): string {
   if (value == null || Number.isNaN(value)) return '--';
@@ -21,18 +23,54 @@ export const Measurements: React.FC<MeasurementsProps> = ({
   resultsLoading,
   resultsError,
 }) => {
-  // Backend results are still mock (model_url === null) until reconstruction is
-  // implemented, so they must never be presented as real measurements.
-  const unavailable = isPlaceholderResults(results);
-  const measurements = unavailable ? undefined : results?.measurements;
+  // The reconstruction is real but UP-TO-SCALE and not georeferenced, so real
+  // -world units (m / m²) genuinely do not exist. This is a property of the
+  // data, not a missing feature.
+  const metricUnavailable = isPlaceholderResults(results);
+  const reconstructed = hasReconstruction(results);
+  const reconstruction = results?.reconstruction;
+  const measurements = metricUnavailable ? undefined : results?.measurements;
 
   const notice = resultsLoading
     ? 'Loading job results...'
     : resultsError
     ? resultsError
     : !isComplete
-    ? 'Measurements will be available once the pipeline completes.'
-    : 'Measurements unavailable - reconstruction not yet implemented.';
+    ? 'Reconstruction facts will be available once the pipeline completes.'
+    : reconstructed
+    ? 'Metric measurements are unavailable: the reconstruction is up-to-scale and this video contains no GPS or flight telemetry, so no real-world units exist.'
+    : 'No reconstructed geometry for this job yet.';
+
+  // Real-world units cannot be derived from an up-to-scale, un-georeferenced
+  // cloud, so this panel reports reconstruction facts instead of fake m / m².
+  const facts = [
+    {
+      name: 'Cameras Registered',
+      icon: Ruler,
+      value: countFormatter.format(reconstruction?.n_frames_registered ?? 0),
+      desc: 'Frames with a solved global pose',
+    },
+    {
+      name: 'Sparse Points',
+      icon: Box,
+      value: countFormatter.format(reconstruction?.sparse_point_count ?? 0),
+      desc: 'Triangulated SfM points',
+    },
+    {
+      name: 'Denser Points',
+      icon: Box,
+      value: countFormatter.format(reconstruction?.dense_point_count ?? 0),
+      desc: 'Depth-anchored back-projected points',
+    },
+    {
+      name: 'Georeferenced',
+      icon: MapPin,
+      value: reconstruction?.georeferenced ? 'YES' : 'NO',
+      desc: reconstruction?.georeferenced
+        ? 'Placed on WGS84 from flight telemetry'
+        : 'No GPS/flight telemetry in this video',
+    },
+  ];
 
   const tools = [
     {
@@ -75,52 +113,76 @@ export const Measurements: React.FC<MeasurementsProps> = ({
           </h2>
         </div>
         <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-slate-800 border border-slate-700 text-slate-300">
-          {unavailable ? 'NOT AVAILABLE' : 'METRIC WGS84'}
+          {reconstruction?.georeferenced ? 'METRIC WGS84' : 'UP-TO-SCALE / LOCAL'}
         </span>
       </div>
 
-      {/* Availability notice — mock results are never shown as real */}
-      {unavailable && (
-        <div className="p-3 mb-4 rounded-lg bg-amber-950/30 border border-amber-500/40 flex items-start gap-2.5 text-xs text-amber-300">
-          <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-          <span>{notice}</span>
-        </div>
-      )}
+      {/* Availability notice — never presents non-metric data as metric */}
+      <div className="p-3 mb-4 rounded-lg bg-amber-950/30 border border-amber-500/40 flex items-start gap-2.5 text-xs text-amber-300">
+        <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+        <span>{notice}</span>
+      </div>
 
-      {/* Measurement Toolset Cards */}
+      {/* Real reconstruction facts */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
-        {tools.map((tool) => {
-          const Icon = tool.icon;
+        {facts.map((fact) => {
+          const Icon = fact.icon;
           return (
             <div
-              key={tool.name}
+              key={fact.name}
               className="p-3.5 rounded-lg bg-slate-950/60 border border-slate-800 hover:border-slate-700 transition-colors flex flex-col justify-between"
             >
               <div className="flex items-center justify-between mb-2">
-                <span className="text-xs font-mono font-medium text-slate-300">{tool.name}</span>
+                <span className="text-xs font-mono font-medium text-slate-300">{fact.name}</span>
                 <Icon className="w-4 h-4 text-cyan-400" />
               </div>
               <div className="my-2">
-                <span className="text-xl font-bold font-mono text-slate-100">
-                  {formatMetric(tool.value, tool.unit)}
-                </span>
+                <span className="text-xl font-bold font-mono text-slate-100">{fact.value}</span>
               </div>
-              <p className="text-[10px] text-slate-500 leading-tight">{tool.desc}</p>
+              <p className="text-[10px] text-slate-500 leading-tight">{fact.desc}</p>
             </div>
           );
         })}
       </div>
 
+      {/* Metric tools — only meaningful once a georeference exists */}
+      {tools.some((tool) => tool.value != null) && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
+          {tools.map((tool) => {
+            const Icon = tool.icon;
+            return (
+              <div
+                key={tool.name}
+                className="p-3.5 rounded-lg bg-slate-950/60 border border-slate-800 flex flex-col justify-between"
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-mono font-medium text-slate-300">{tool.name}</span>
+                  <Icon className="w-4 h-4 text-cyan-400" />
+                </div>
+                <div className="my-2">
+                  <span className="text-xl font-bold font-mono text-slate-100">
+                    {formatMetric(tool.value, tool.unit)}
+                  </span>
+                </div>
+                <p className="text-[10px] text-slate-500 leading-tight">{tool.desc}</p>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       {/* Interactive Tool Selector Bar */}
       <div className="flex flex-wrap items-center justify-between gap-3 p-2.5 rounded-lg bg-slate-950 border border-slate-800 text-xs font-mono">
         <div className="flex items-center gap-2 text-slate-400">
           <MapPin className="w-3.5 h-3.5 text-cyan-400" />
-          <span>TOOL: <span className="text-slate-200">Point Picker (Disabled)</span></span>
+          <span>
+            TOOL: <span className="text-slate-200">Relative Distance (3D Viewer)</span>
+          </span>
         </div>
         <span className="text-amber-400/90 text-[11px]">
-          {unavailable
-            ? 'Click-to-measure requires reconstructed geometry (not implemented).'
-            : 'Click-to-measure activates once 3D model vertices load.'}
+          {reconstructed
+            ? 'Measure relative spans in reconstruction units using the ruler tool in the 3D viewer. Real-world metres require georeferencing.'
+            : 'Available once the job has a reconstructed point cloud.'}
         </span>
       </div>
     </div>
