@@ -158,10 +158,11 @@ async def _run_pipeline(job_id: str) -> None:
         job["hazards_analyzed"] = sorted(disaster_payload["disasters"])
 
         # Step 6: 3D reconstruction (REAL, Phases 8.1-8.4).
-        # Reuses whatever the reconstruction package already produced. It does
-        # NOT re-run YOLO, segmentation, depth estimation or flood analysis, and
-        # by default it does not start a new reconstruction either - a full run
-        # takes minutes, so that is an explicit decision (see RECONSTRUCTION_AUTORUN).
+        # The processing pipeline IS the explicit decision to reconstruct: it
+        # runs reconstruction for THIS job when its artifacts are missing, and
+        # reuses existing artifacts when they are already on disk (never
+        # regenerates). It does NOT re-run YOLO, segmentation, depth estimation
+        # or flood analysis. Status GET endpoints stay cheap and read-only.
         job["status"] = "reconstructing"
         job["progress"] = 94
 

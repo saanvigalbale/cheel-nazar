@@ -19,9 +19,12 @@ class Settings(BaseModel):
     MAX_UPLOAD_SIZE_BYTES: int = 500 * 1024 * 1024  # 500 MB
 
     # Reconstruction (Phase 8.6).
-    # False = reuse whatever artifacts already exist (fast). True = also build a
-    # missing reconstruction during the job pipeline, which takes minutes.
-    RECONSTRUCTION_AUTORUN: bool = False
+    # True = the normal processing pipeline EXECUTES reconstruction for the
+    # current job at its reconstruction stage (Step 6 of jobs.py), so every
+    # newly processed upload ends with real artifacts under that job's data
+    # directory. Existing artifacts are always reused and never recomputed;
+    # status GET endpoints never trigger reconstruction (they only read disk).
+    RECONSTRUCTION_AUTORUN: bool = True
 
     # CORS configuration
     CORS_ORIGINS: List[str] = [
