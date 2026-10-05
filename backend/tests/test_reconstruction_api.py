@@ -366,3 +366,48 @@ def test_ensure_reconstruction_does_not_run_when_not_requested(data_dir):
 
     assert payload["status"] == "not_available"
     assert not (data_dir / JOB / "reconstruction" / "dense_points_global.glb").exists()
+
+
+def test_ensure_reconstruction_reuses_artifacts_even_when_asked_to_run(data_dir):
+    """``run_missing=True`` must still reuse what already exists (no re-run)."""
+    from app.services.reconstruction_service import ensure_reconstruction
+
+    _build_reconstruction(data_dir, n_points=42)
+    before = (data_dir / JOB / "reconstruction" / "dense_points_global.glb").stat().st_mtime_ns
+
+    payload = ensure_reconstruction(JOB, run_missing=True)
+
+    after = (data_dir / JOB / "reconstruction" / "dense_points_global.glb").stat().st_mtime_ns
+    assert payload["status"] == "success"
+    assert payload["dense_point_count"] == 42
+    assert before == after, "existing artifacts must not be regenerated"
+
+
+# ---------------------------------------------------------------------------
+# Served bytes must be the artifact itself
+# ---------------------------------------------------------------------------
+
+def test_api_serves_byte_identical_glb(data_dir):
+    rec = _build_reconstruction(data_dir)
+    on_disk = (rec / PRIMARY_ARTIFACT).read_bytes()
+
+    response = client.get(f"{BASE}/{JOB}/artifact/{PRIMARY_ARTIFACT}")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "model/gltf-binary"
+    assert response.content == on_disk
+
+
+# ---------------------------------------------------------------------------
+# Video path lookup feeding the georeferencing metadata probe
+# ---------------------------------------------------------------------------
+
+def test_job_video_path_finds_the_uploaded_video(data_dir):
+    from app.services.reconstruction_service import _job_video_path
+
+    assert _job_video_path(JOB) is None, "no upload -> no video path"
+
+    video = data_dir.parent / "uploads" / f"{JOB}_flight.mp4"
+    video.write_bytes(b"\x00\x00\x00\x18ftypmp42")
+
+    assert _job_video_path(JOB) == video

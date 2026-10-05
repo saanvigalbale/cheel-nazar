@@ -103,6 +103,9 @@ def _job_video_path(job_id: str) -> Optional[Path]:
         matches = sorted(settings.UPLOADS_DIR.glob(f"{job_id}_*"))
     except OSError:
         return None
+    return matches[0] if matches else None
+
+
 def build_reconstruction_payload(job_id: str) -> Dict[str, Any]:
     """Build the reconstruction section for ``job_id`` from real artifacts.
 
@@ -225,4 +228,3 @@ def ensure_reconstruction(job_id: str, run_missing: bool = False) -> Dict[str, A
         payload["status"] = "dense_reconstruction_failed"
         payload["run_note"] = dense_result.message
     return payload
-    return matches[0] if matches else None
